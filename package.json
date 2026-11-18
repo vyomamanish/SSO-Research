@@ -1,0 +1,16 @@
+{
+  "name": "authentik-sso-demo",
+  "private": true,
+  "scripts": {
+    "setup": "node scripts/setup.mjs && npm install && npm install --prefix app-a && npm install --prefix app-b && npm install --prefix api",
+    "up": "docker compose up -d",
+    "down": "docker compose down",
+    "reset": "docker compose down -v",
+    "build": "npm run build --prefix app-a && npm run build --prefix app-b",
+    "start": "concurrently -n ott,dsg,api -c magenta,green,cyan \"npm start --prefix app-a\" \"npm start --prefix app-b\" \"npm start --prefix api\"",
+    "dev": "concurrently -n ott,dsg,api -c magenta,green,cyan \"npm run dev --prefix app-a\" \"npm run dev --prefix app-b\" \"npm start --prefix api\""
+  },
+  "devDependencies": {
+    "concurrently": "10.0.6"
+  }
+}

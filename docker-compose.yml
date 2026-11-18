@@ -1,0 +1,84 @@
+# Based on the official Authentik 2026.8.5 compose file (https://docs.goauthentik.io/compose.yml).
+# Redis is gone: current Authentik needs only server, worker and PostgreSQL.
+#
+# Changes from the official file:
+#   - Versions pinned; Postgres is pinned to an exact minor version.
+#   - The Docker socket mount is removed. It only serves automatic outpost
+#     deployment, which this demo doesn't use.
+#   - ./blueprints is mounted so Authentik configures itself on startup.
+#   - extra_hosts makes host.docker.internal work on Linux too, so the worker
+#     can reach the apps for back-channel logout.
+name: authentik-sso-demo
+
+services:
+  postgresql:
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${PG_DB:-authentik}
+      POSTGRES_PASSWORD: ${PG_PASS:?database password required}
+      POSTGRES_USER: ${PG_USER:-authentik}
+    healthcheck:
+      interval: 30s
+      retries: 5
+      start_period: 20s
+      test:
+        - CMD-SHELL
+        - pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}
+      timeout: 5s
+    image: docker.io/library/postgres:16.15-alpine
+    restart: unless-stopped
+    volumes:
+      - database:/var/lib/postgresql/data
+
+  server:
+    command: server
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      AUTHENTIK_POSTGRESQL__HOST: postgresql
+      AUTHENTIK_POSTGRESQL__NAME: ${PG_DB:-authentik}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS}
+      AUTHENTIK_POSTGRESQL__USER: ${PG_USER:-authentik}
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?secret key required}
+    image: ghcr.io/goauthentik/server:2026.8.5
+    ports:
+      - 9000:9000
+      - 9443:9443
+    restart: unless-stopped
+    shm_size: 512mb
+    volumes:
+      - ./data:/data
+      - ./custom-templates:/templates
+
+  worker:
+    command: worker
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      AUTHENTIK_POSTGRESQL__HOST: postgresql
+      AUTHENTIK_POSTGRESQL__NAME: ${PG_DB:-authentik}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS}
+      AUTHENTIK_POSTGRESQL__USER: ${PG_USER:-authentik}
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?secret key required}
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    image: ghcr.io/goauthentik/server:2026.8.5
+    restart: unless-stopped
+    shm_size: 512mb
+    user: root
+    volumes:
+      - ./blueprints:/blueprints/vyoma:ro
+      - ./data:/data
+      - ./certs:/certs
+      - ./custom-templates:/templates
+
+volumes:
+  database:
+    driver: local

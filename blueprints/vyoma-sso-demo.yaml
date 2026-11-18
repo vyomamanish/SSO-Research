@@ -1,0 +1,164 @@
+# Configures Authentik for the demo. The worker applies this file automatically
+# on startup; it creates everything in README section 3.
+version: 1
+metadata:
+  name: Vyoma SSO demo
+  labels:
+    blueprints.goauthentik.io/description: Groups, users, scope mapping and two OIDC apps for the SSO demo
+
+entries:
+  # Blueprint load order isn't guaranteed, so wait for the built-ins we reference.
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Authentication flow
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Invalidation flow
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Provider authorization flow (implicit consent)
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: System - OAuth2 Provider - Scopes
+      required: true
+
+  # ---------- Groups ----------
+  - id: group-admins
+    model: authentik_core.group
+    identifiers:
+      name: vyoma-admins
+  - id: group-staff
+    model: authentik_core.group
+    identifiers:
+      name: vyoma-staff
+
+  # ---------- Test users ----------
+  # state: created means this only runs once, so changes made in the UI during
+  # a demo (group moves, TOTP enrolment) aren't reverted by the hourly re-apply.
+  - model: authentik_core.user
+    state: created
+    identifiers:
+      username: vyoma.admin
+    attrs:
+      name: Asha Admin
+      email: vyoma.admin@example.com
+      type: internal
+      password: !Env DEMO_ADMIN_PASSWORD
+      groups:
+        - !KeyOf group-admins
+        - !KeyOf group-staff
+  - model: authentik_core.user
+    state: created
+    identifiers:
+      username: vyoma.staff
+    attrs:
+      name: Sam Staff
+      email: vyoma.staff@example.com
+      type: internal
+      password: !Env DEMO_STAFF_PASSWORD
+      groups:
+        - !KeyOf group-staff
+
+  # ---------- Scope mappings ----------
+  # Authentik's built-in `profile` mapping also emits `groups`, and claims from
+  # several mappings are concatenated, so using it alongside `groups` would list
+  # every group twice. This replacement leaves groups to the dedicated scope.
+  - id: scope-profile
+    model: authentik_providers_oauth2.scopemapping
+    identifiers:
+      name: "Vyoma: profile without groups"
+    attrs:
+      scope_name: profile
+      description: General profile information
+      expression: |
+        return {
+            "name": request.user.name,
+            "preferred_username": request.user.username,
+        }
+  - id: scope-groups
+    model: authentik_providers_oauth2.scopemapping
+    identifiers:
+      name: "Vyoma: groups claim"
+    attrs:
+      scope_name: groups
+      description: Group membership
+      expression: |
+        return {"groups": [group.name for group in request.user.groups.all()]}
+
+  # ---------- OTT Demo (app-a) ----------
+  - id: provider-ott
+    model: authentik_providers_oauth2.oauth2provider
+    identifiers:
+      name: OTT Demo provider
+    attrs: &provider-defaults
+      # No consent screen: this is what makes the second app feel instant.
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      # Must be this flow, not default-provider-invalidation-flow: only this one
+      # has a logout stage, so only this one ends the Authentik session.
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-invalidation-flow]]
+      client_type: confidential
+      # An empty list (the default for blueprints) rejects every grant.
+      grant_types:
+        - authorization_code
+      client_id: ott-demo
+      client_secret: !Env OTT_CLIENT_SECRET
+      # Asymmetric signing publishes the public key via JWKS for the API to use.
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      issuer_mode: per_provider
+      include_claims_in_id_token: true
+      # The default is 5 minutes, which could expire mid-demo as the apps don't refresh.
+      access_token_validity: hours=1
+      # The worker runs in Docker, so it reaches the apps on the host this way.
+      logout_method: backchannel
+      logout_uri: http://host.docker.internal:3001/api/backchannel-logout
+      redirect_uris:
+        - matching_mode: strict
+          url: http://localhost:3001/api/auth/callback/authentik
+          redirect_uri_type: authorization
+        - matching_mode: strict
+          url: http://localhost:3001/
+          redirect_uri_type: logout
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+        - !KeyOf scope-profile
+        - !KeyOf scope-groups
+  - model: authentik_core.application
+    identifiers:
+      slug: ott-demo
+    attrs:
+      name: OTT Demo
+      provider: !KeyOf provider-ott
+      meta_launch_url: http://localhost:3001/
+
+  # ---------- DSG Demo (app-b) ----------
+  - id: provider-dsg
+    model: authentik_providers_oauth2.oauth2provider
+    identifiers:
+      name: DSG Demo provider
+    attrs:
+      <<: *provider-defaults
+      client_id: dsg-demo
+      client_secret: !Env DSG_CLIENT_SECRET
+      logout_uri: http://host.docker.internal:3002/api/backchannel-logout
+      redirect_uris:
+        - matching_mode: strict
+          url: http://localhost:3002/api/auth/callback/authentik
+          redirect_uri_type: authorization
+        - matching_mode: strict
+          url: http://localhost:3002/
+          redirect_uri_type: logout
+  - model: authentik_core.application
+    identifiers:
+      slug: dsg-demo
+    attrs:
+      name: DSG Demo
+      provider: !KeyOf provider-dsg
+      meta_launch_url: http://localhost:3002/
