@@ -1,10 +1,11 @@
-# Configures Authentik for the demo. The worker applies this file automatically
-# on startup; it creates everything in README section 3.
+# Configures Authentik for the OTT 2.0 and DSG 2.0 demo, following
+# ott-sso.md (sections 3, 9) and dsg-sso.md (section 5). The worker applies this
+# file automatically on startup and re-applies it hourly.
 version: 1
 metadata:
   name: Vyoma SSO demo
   labels:
-    blueprints.goauthentik.io/description: Groups, users, scope mapping and two OIDC apps for the SSO demo
+    blueprints.goauthentik.io/description: Groups, users, scope mappings and the OTT and DSG OIDC apps
 
 entries:
   # Blueprint load order isn't guaranteed, so wait for the built-ins we reference.
@@ -26,139 +27,278 @@ entries:
   - model: authentik_blueprints.metaapplyblueprint
     attrs:
       identifiers:
+        name: Default - Provider authorization flow (explicit consent)
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
         name: System - OAuth2 Provider - Scopes
       required: true
 
-  # ---------- Groups ----------
-  - id: group-admins
-    model: authentik_core.group
+  # ---------- Remove objects from the earlier version of this demo ----------
+  - model: authentik_core.application
+    state: absent
     identifiers:
-      name: vyoma-admins
-  - id: group-staff
-    model: authentik_core.group
+      slug: ott-demo
+  - model: authentik_core.application
+    state: absent
+    identifiers:
+      slug: dsg-demo
+  - model: authentik_providers_oauth2.oauth2provider
+    state: absent
+    identifiers:
+      name: OTT Demo provider
+  - model: authentik_providers_oauth2.oauth2provider
+    state: absent
+    identifiers:
+      name: DSG Demo provider
+  - model: authentik_providers_oauth2.scopemapping
+    state: absent
+    identifiers:
+      name: "Vyoma: groups claim"
+  - model: authentik_providers_oauth2.scopemapping
+    state: absent
+    identifiers:
+      name: "Vyoma: profile without groups"
+  - model: authentik_core.user
+    state: absent
+    identifiers:
+      username: vyoma.admin
+  - model: authentik_core.user
+    state: absent
+    identifiers:
+      username: vyoma.staff
+  - model: authentik_core.group
+    state: absent
     identifiers:
       name: vyoma-staff
 
+  # ---------- Groups ----------
+  # OTT organisational roles (ott-sso.md 3.1). These are shared Vyoma staff roles.
+  - id: g-superadmins
+    model: authentik_core.group
+    identifiers: { name: vyoma-superadmins }
+  - id: g-admins
+    model: authentik_core.group
+    identifiers: { name: vyoma-admins }
+  - id: g-managers
+    model: authentik_core.group
+    identifiers: { name: vyoma-managers }
+  - id: g-finance
+    model: authentik_core.group
+    identifiers: { name: vyoma-finance }
+  - id: g-users
+    model: authentik_core.group
+    identifiers: { name: vyoma-users }
+  # DSG roles and per-page access (dsg-sso.md 5.6).
+  - id: g-dsg-super-admin
+    model: authentik_core.group
+    identifiers: { name: dsg-super-admin }
+  - id: g-dsg-staff
+    model: authentik_core.group
+    identifiers: { name: dsg-staff }
+  - id: g-dsg-page-orders
+    model: authentik_core.group
+    identifiers: { name: dsg-page-orders }
+  - id: g-dsg-page-coupons
+    model: authentik_core.group
+    identifiers: { name: dsg-page-coupons }
+  - id: g-dsg-page-users
+    model: authentik_core.group
+    identifiers: { name: dsg-page-users }
+
   # ---------- Test users ----------
-  # state: created means this only runs once, so changes made in the UI during
-  # a demo (group moves, TOTP enrolment) aren't reverted by the hourly re-apply.
+  # state: created means these run once, so group changes made in the UI during
+  # a demo aren't reverted by the hourly re-apply. Asha, Ravi and Meera also
+  # exist in the OTT and DSG databases (seeded), so their first SSO login links
+  # to their existing records. Kiran is new everywhere.
+  # attributes.email_verified feeds the email scope mapping below.
   - model: authentik_core.user
     state: created
-    identifiers:
-      username: vyoma.admin
+    identifiers: { username: asha.admin }
     attrs:
-      name: Asha Admin
-      email: vyoma.admin@example.com
+      name: Asha Rao
+      email: asha@vyoma.demo
       type: internal
-      password: !Env DEMO_ADMIN_PASSWORD
-      groups:
-        - !KeyOf group-admins
-        - !KeyOf group-staff
+      password: !Env DEMO_ASHA_PASSWORD
+      attributes: { email_verified: true }
+      groups: [!KeyOf g-superadmins, !KeyOf g-dsg-super-admin]
   - model: authentik_core.user
     state: created
-    identifiers:
-      username: vyoma.staff
+    identifiers: { username: ravi.manager }
     attrs:
-      name: Sam Staff
-      email: vyoma.staff@example.com
+      name: Ravi Kumar
+      email: ravi@vyoma.demo
       type: internal
-      password: !Env DEMO_STAFF_PASSWORD
-      groups:
-        - !KeyOf group-staff
+      password: !Env DEMO_RAVI_PASSWORD
+      attributes: { email_verified: true }
+      groups: [!KeyOf g-managers, !KeyOf g-dsg-staff, !KeyOf g-dsg-page-orders]
+  - model: authentik_core.user
+    state: created
+    identifiers: { username: priya.finance }
+    attrs:
+      name: Priya Shah
+      email: priya@vyoma.demo
+      type: internal
+      password: !Env DEMO_PRIYA_PASSWORD
+      attributes: { email_verified: true }
+      groups: [!KeyOf g-finance]
+  - model: authentik_core.user
+    state: created
+    identifiers: { username: meera.learner }
+    attrs:
+      name: Meera Iyer
+      email: meera@vyoma.demo
+      type: internal
+      password: !Env DEMO_MEERA_PASSWORD
+      attributes: { email_verified: true }
+      groups: [!KeyOf g-users]
+  - model: authentik_core.user
+    state: created
+    identifiers: { username: kiran.new }
+    attrs:
+      name: Kiran Das
+      email: kiran@vyoma.demo
+      type: internal
+      password: !Env DEMO_KIRAN_PASSWORD
+      attributes: { email_verified: true }
+      groups: [!KeyOf g-users]
 
   # ---------- Scope mappings ----------
-  # Authentik's built-in `profile` mapping also emits `groups`, and claims from
-  # several mappings are concatenated, so using it alongside `groups` would list
-  # every group twice. This replacement leaves groups to the dedicated scope.
-  - id: scope-profile
+  # Authentik's built-in email mapping always sends email_verified: false. DSG
+  # (dsg-sso.md 7.1) only links existing accounts by a verified email, so it
+  # would refuse everyone. This mapping reports a real per-user flag instead.
+  - id: scope-email
     model: authentik_providers_oauth2.scopemapping
     identifiers:
-      name: "Vyoma: profile without groups"
+      name: "Vyoma: email with verified flag"
     attrs:
-      scope_name: profile
-      description: General profile information
+      scope_name: email
+      description: Email address
       expression: |
         return {
-            "name": request.user.name,
-            "preferred_username": request.user.username,
+            "email": request.user.email,
+            "email_verified": bool(request.user.attributes.get("email_verified", False)),
         }
-  - id: scope-groups
+
+  # ott-sso.md 9.4. The plan uses user.ak_groups, which Authentik 2026.8 no
+  # longer has; the current API is request.user.groups.
+  - id: scope-vyoma-roles
     model: authentik_providers_oauth2.scopemapping
     identifiers:
-      name: "Vyoma: groups claim"
+      name: Vyoma Roles Mapping
     attrs:
-      scope_name: groups
-      description: Group membership
+      scope_name: vyoma_roles
+      description: Vyoma platform role
       expression: |
-        return {"groups": [group.name for group in request.user.groups.all()]}
+        user_groups = [g.name for g in request.user.groups.all()]
+        if "vyoma-superadmins" in user_groups:
+            return {"role": "SUPER_ADMIN"}
+        if "vyoma-admins" in user_groups:
+            return {"role": "ADMIN"}
+        if "vyoma-managers" in user_groups:
+            return {"role": "MANAGER"}
+        if "vyoma-finance" in user_groups:
+            return {"role": "FINANCE"}
+        return {"role": "USER"}
 
-  # ---------- OTT Demo (app-a) ----------
+  # dsg-sso.md 5.6, with the same ak_groups correction.
+  - id: scope-dsg
+    model: authentik_providers_oauth2.scopemapping
+    identifiers:
+      name: DSG roles
+    attrs:
+      scope_name: dsg
+      description: DSG roles and admin pages
+      expression: |
+        return {
+            "dsg_roles": [g.name for g in request.user.groups.all() if g.name.startswith("dsg-")],
+        }
+
+  # ---------- Vyoma OTT 2.0 (ott-sso.md 9.1 - 9.3) ----------
   - id: provider-ott
     model: authentik_providers_oauth2.oauth2provider
     identifiers:
-      name: OTT Demo provider
-    attrs: &provider-defaults
-      # No consent screen: this is what makes the second app feel instant.
-      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
-      # Must be this flow, not default-provider-invalidation-flow: only this one
-      # has a logout stage, so only this one ends the Authentik session.
+      name: Vyoma OTT 2.0 Provider
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-explicit-consent]]
+      # Only this flow contains the logout stage that ends the Authentik session.
       invalidation_flow: !Find [authentik_flows.flow, [slug, default-invalidation-flow]]
       client_type: confidential
-      # An empty list (the default for blueprints) rejects every grant.
-      grant_types:
-        - authorization_code
-      client_id: ott-demo
+      # A blueprint-created provider with no grant types rejects every login.
+      grant_types: [authorization_code]
+      client_id: vyoma-ott-platform
       client_secret: !Env OTT_CLIENT_SECRET
-      # Asymmetric signing publishes the public key via JWKS for the API to use.
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
       issuer_mode: per_provider
+      # Same `sub` for a person in OTT, DSG and the intranet (dsg-sso.md 12).
+      sub_mode: user_uuid
       include_claims_in_id_token: true
-      # The default is 5 minutes, which could expire mid-demo as the apps don't refresh.
-      access_token_validity: hours=1
-      # The worker runs in Docker, so it reaches the apps on the host this way.
+      access_token_validity: minutes=15
+      # The worker runs in Docker, so it reaches the app on the host this way.
       logout_method: backchannel
-      logout_uri: http://host.docker.internal:3001/api/backchannel-logout
+      logout_uri: http://host.docker.internal:3000/api/auth/backchannel-logout
       redirect_uris:
         - matching_mode: strict
-          url: http://localhost:3001/api/auth/callback/authentik
+          url: http://localhost:3000/api/auth/callback
           redirect_uri_type: authorization
         - matching_mode: strict
-          url: http://localhost:3001/
+          url: http://localhost:3000/login
           redirect_uri_type: logout
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
-        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
-        - !KeyOf scope-profile
-        - !KeyOf scope-groups
+        - !KeyOf scope-email
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+        - !KeyOf scope-vyoma-roles
   - model: authentik_core.application
     identifiers:
-      slug: ott-demo
+      slug: vyoma-ott
     attrs:
-      name: OTT Demo
+      name: Vyoma OTT
       provider: !KeyOf provider-ott
-      meta_launch_url: http://localhost:3001/
+      group: Vyoma Streaming Platforms
+      meta_launch_url: http://localhost:3000/
 
-  # ---------- DSG Demo (app-b) ----------
+  # ---------- DSG 2.0, dev environment (dsg-sso.md 5.1 - 5.4) ----------
   - id: provider-dsg
     model: authentik_providers_oauth2.oauth2provider
     identifiers:
-      name: DSG Demo provider
+      name: DSG Dev (OIDC)
     attrs:
-      <<: *provider-defaults
-      client_id: dsg-demo
+      # First-party app, so no consent screen.
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-invalidation-flow]]
+      client_type: confidential
+      grant_types: [authorization_code]
+      client_id: dsg-dev
       client_secret: !Env DSG_CLIENT_SECRET
-      logout_uri: http://host.docker.internal:3002/api/backchannel-logout
+      # dsg-sso.md asks for a dedicated key per environment; dev uses the default.
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      issuer_mode: per_provider
+      sub_mode: user_uuid
+      include_claims_in_id_token: true
+      access_code_validity: minutes=1
+      access_token_validity: minutes=10
+      # dsg-sso.md 4.6 leaves this to open question Q9. Authentik 2026.8.5
+      # supports it, so DSG logs out when the user logs out of OTT.
+      logout_method: backchannel
+      logout_uri: http://host.docker.internal:5001/api/auth/oidc/backchannel-logout
       redirect_uris:
         - matching_mode: strict
-          url: http://localhost:3002/api/auth/callback/authentik
+          url: http://localhost:5173/api/auth/oidc/callback
           redirect_uri_type: authorization
         - matching_mode: strict
-          url: http://localhost:3002/
+          url: http://localhost:5173/
           redirect_uri_type: logout
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+        - !KeyOf scope-email
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+        - !KeyOf scope-dsg
   - model: authentik_core.application
     identifiers:
-      slug: dsg-demo
+      slug: dsg-dev
     attrs:
-      name: DSG Demo
+      name: Digital Sanskrit Guru
       provider: !KeyOf provider-dsg
-      meta_launch_url: http://localhost:3002/
+      meta_launch_url: http://localhost:5173/

@@ -1,0 +1,71 @@
+# "Sign in with Google" for every Vyoma app, as both plans describe: Google
+# becomes an Authentik source (dsg-sso.md 5.5, ott-sso.md 1.2), so OTT and DSG
+# need no Google code. Each entry only applies when GOOGLE_CLIENT_ID is set in
+# .env; until then the login page shows the password form only.
+version: 1
+metadata:
+  name: Vyoma SSO demo - Google sign-in
+  labels:
+    blueprints.goauthentik.io/description: Google OAuth source on the Vyoma login page
+
+entries:
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Authentication flow
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Source authentication flow
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Source enrollment flow
+      required: true
+
+  # Google only sends an email and a name. This gives new users a username, so
+  # the enrollment flow doesn't stop to ask for one, and records whether Google
+  # verified the email. OTT and DSG only link existing accounts by a verified
+  # email (see the email scope mapping in vyoma-sso-demo.yaml).
+  - id: google-mapping
+    conditions: [!Env GOOGLE_CLIENT_ID]
+    model: authentik_sources_oauth.oauthsourcepropertymapping
+    identifiers:
+      name: "Vyoma: Google profile"
+    attrs:
+      expression: |
+        email = (info.get("email") or "").lower()
+        return {
+            "username": email,
+            "attributes": {
+                "email_verified": bool(info.get("verified_email", info.get("email_verified", False))),
+            },
+        }
+
+  - id: google-source
+    conditions: [!Env GOOGLE_CLIENT_ID]
+    model: authentik_sources_oauth.oauthsource
+    identifiers:
+      slug: google
+    attrs:
+      name: Google
+      provider_type: google
+      consumer_key: !Env GOOGLE_CLIENT_ID
+      consumer_secret: !Env GOOGLE_CLIENT_SECRET
+      authentication_flow: !Find [authentik_flows.flow, [slug, default-source-authentication]]
+      enrollment_flow: !Find [authentik_flows.flow, [slug, default-source-enrollment]]
+      # dsg-sso.md 5.5: link to an existing Vyoma account with the same email.
+      # Safe for Google, which only returns addresses it has verified.
+      user_matching_mode: email_link
+      user_property_mappings: [!KeyOf google-mapping]
+
+  # Show the Google button on the default login page.
+  - conditions: [!Env GOOGLE_CLIENT_ID]
+    model: authentik_stages_identification.identificationstage
+    identifiers:
+      name: default-authentication-identification
+    attrs:
+      sources: [!KeyOf google-source]
+      show_source_labels: true

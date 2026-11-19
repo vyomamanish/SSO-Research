@@ -2,13 +2,16 @@
   "name": "authentik-sso-demo",
   "private": true,
   "scripts": {
-    "setup": "node scripts/setup.mjs && npm install && npm install --prefix app-a && npm install --prefix app-b && npm install --prefix api",
+    "setup": "node scripts/setup.mjs && npm install && npm install --prefix ott && npm install --prefix dsg && npm install --prefix dsg/backend",
     "up": "docker compose up -d",
     "down": "docker compose down",
     "reset": "docker compose down -v",
-    "build": "npm run build --prefix app-a && npm run build --prefix app-b",
-    "start": "concurrently -n ott,dsg,api -c magenta,green,cyan \"npm start --prefix app-a\" \"npm start --prefix app-b\" \"npm start --prefix api\"",
-    "dev": "concurrently -n ott,dsg,api -c magenta,green,cyan \"npm run dev --prefix app-a\" \"npm run dev --prefix app-b\" \"npm start --prefix api\""
+    "google:apply": "docker compose up -d worker && docker compose exec worker ak apply_blueprint vyoma/google-source.yaml",
+    "db:init": "npm run db:push --prefix ott && npm run db:seed --prefix ott && npm run seed --prefix dsg/backend",
+    "build": "npm run build --prefix ott && npm run build --prefix dsg",
+    "start": "concurrently -n ott,dsg-api,dsg -c magenta,green,yellow \"npm start --prefix ott\" \"npm start --prefix dsg/backend\" \"npm run preview --prefix dsg\"",
+    "dev": "concurrently -n ott,dsg-api,dsg -c magenta,green,yellow \"npm run dev --prefix ott\" \"npm run dev --prefix dsg/backend\" \"npm run dev --prefix dsg\"",
+    "test": "npm test --prefix dsg/backend"
   },
   "devDependencies": {
     "concurrently": "10.0.6"

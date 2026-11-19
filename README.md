@@ -1,179 +1,268 @@
-# Vyoma SSO demo with Authentik
+# Vyoma SSO demo: OTT 2.0 and DSG 2.0 with Authentik
 
-A user signs in once through Authentik, then opens a second app without entering a password again. The demo also shows role-based access and a logout that ends the session in both apps.
+A working version of the two integration plans, `ott-sso.md` and `dsg-sso.md`. Each app is built the way its plan recommends, with the same file names, routes, variable names and Authentik settings, so the code can be used as a reference when changing the real apps.
 
-| Service | URL | Purpose |
+A user signs in once with their Vyoma account and uses both apps. Existing users keep their plans, purchases and orders. Staff roles come from Authentik groups, and logging out of one app logs out of both.
+
+| Service | URL | Built like |
 | --- | --- | --- |
-| Authentik | http://localhost:9000 | Identity Provider |
-| OTT Demo (`app-a`) | http://localhost:3001 | First app; also calls the API |
-| DSG Demo (`app-b`) | http://localhost:3002 | Second app |
-| Express API (`api`) | http://localhost:4000/api/me | Backend that trusts the same login |
+| Authentik | http://localhost:9000 | The shared Vyoma identity provider |
+| Vyoma OTT | http://localhost:3000 | OTT 2.0: Next.js 16 App Router, Prisma, PostgreSQL |
+| Digital Sanskrit Guru | http://localhost:5173 | DSG 2.0: React + Vite SPA, with Express and MongoDB behind it on port 5001 |
+
+How the pieces fit together, with diagrams of sign-in and logout, is in [docs/architecture.md](docs/architecture.md).
+
+The demo runs only on this machine, with its own databases. It never connects to a real OTT or DSG database. DSG's MongoDB uses port **27018**, so it can't collide with a MongoDB already running on the default port 27017.
 
 ## Setup
 
-You need Docker running, and Node.js 20.9 or later. First boot takes about 2 minutes, plus image download time.
+You need Docker running and Node.js 20.19 or later.
 
-### 1. Generate secrets and install dependencies
+### 1. Generate secrets and install
 
 ```bash
 npm run setup
 ```
 
-This creates `.env`, `app-a/.env.local` and `app-b/.env.local` with random secrets, then installs all dependencies. It prints the two demo logins, which are also in `.env` as `DEMO_ADMIN_PASSWORD` and `DEMO_STAFF_PASSWORD`. Re-running it keeps existing files.
+This writes `.env`, `ott/.env` and `dsg/backend/.env`, then installs every package. It prints the five demo logins, which are also kept in `.env`. Re-running it keeps existing values and only adds missing ones.
 
-### 2. Start Authentik
+### 2. Start Authentik and the databases
 
 ```bash
 npm run up
 ```
 
-Compose starts PostgreSQL, the Authentik server and the Authentik worker. Current Authentik doesn't need Redis. The worker then applies `blueprints/vyoma-sso-demo.yaml`, which creates all the configuration in the [next section](#what-the-blueprint-configures).
-
-Wait until this returns JSON rather than a 404:
+Wait about 90 seconds, until this returns JSON:
 
 ```bash
-curl http://localhost:9000/application/o/ott-demo/.well-known/openid-configuration
+curl http://localhost:9000/application/o/vyoma-ott/.well-known/openid-configuration
 ```
 
-### 3. Create the Authentik admin
+### 3. Create the Authentik admin (first time only)
 
-1. Open **http://localhost:9000/**. It redirects you to the setup form.
-2. Enter an email and a password for the built-in `akadmin` user.
-3. Keep the base URL as `http://localhost:9000`, then continue.
+Open **http://localhost:9000/**, enter an email and password for `akadmin`, and continue. Start from the root URL: opening `/if/flow/initial-setup/` directly shows "Request has been denied". If you see a login page instead, this is already done.
 
-> Start from `http://localhost:9000/`. On Authentik 2026.8.5, opening `/if/flow/initial-setup/` directly shows "Request has been denied".
+### 4. Load the demo data
 
-### 4. Build and start the apps
+```bash
+npm run db:init
+```
+
+This creates OTT's tables and puts both databases into their "before SSO" state. Run it again before each demo to start fresh.
+
+### 5. Build and start
 
 ```bash
 npm run build
 npm start
 ```
 
-Use this production build for the meeting because pages load instantly. `npm run dev` also works, but compiles each page on first visit.
+`npm run dev` also works, with hot reload.
 
-## What the blueprint configures
+### Optional: Sign in with Google
 
-The blueprint is Authentik's infrastructure-as-code format, so nobody has to click through setup. You can show each result in the admin UI at http://localhost:9000/if/admin/.
+Both plans move Google sign-in into Authentik as a **source**, instead of a Google button in each app (dsg-sso.md 5.5). Once you set it up, a **Google** button appears on the Vyoma login page under the password form, and it works for OTT, DSG and any future app. Neither app has any Google code.
 
-| What | Value | Where to show it |
-| --- | --- | --- |
-| Groups | `vyoma-admins`, `vyoma-staff` | Directory > Groups |
-| Admin test user | `vyoma.admin` (Asha Admin), in both groups | Directory > Users |
-| Staff test user | `vyoma.staff` (Sam Staff), in `vyoma-staff` | Directory > Users |
-| Scope mappings | `groups`, plus a `profile` that leaves groups out | Customization > Property Mappings |
-| OIDC providers | `OTT Demo provider`, `DSG Demo provider` | Applications > Providers |
-| Applications | `ott-demo`, `dsg-demo` | Applications > Applications |
+**1. Create a Google OAuth client** (about 5 minutes, needs a Google account):
 
-Each provider's settings matter for a specific part of the demo:
+1. Open https://console.cloud.google.com/ and create or select a project.
+2. Open the Google Auth Platform at https://console.cloud.google.com/auth/overview and click **Get started**. Enter an app name, such as "Vyoma SSO (local demo)", and your email. For **Audience**, choose **External**.
+3. While the app is in **Testing** status, only listed accounts can sign in. Open https://console.cloud.google.com/auth/audience and add each Google account you'll use under **Test users**.
+4. Open https://console.cloud.google.com/auth/clients, click **Create client**, and choose **Web application**.
+5. Under **Authorized redirect URIs**, add exactly:
 
-| Setting | Value | Why |
-| --- | --- | --- |
-| Authorization flow | `default-provider-authorization-implicit-consent` | No consent screen, so the second app signs in without a prompt |
-| Invalidation flow | `default-invalidation-flow` | Contains the logout stage that ends the Authentik session |
-| Grant types | `authorization_code` | An empty list rejects every login |
-| Redirect URIs | `/api/auth/callback/authentik` and `/` | The login callback, and where logout returns to |
-| Signing key | Self-signed certificate | RS256 publishes public keys, which the API verifies against |
-| Logout method and URI | Back-channel, `http://host.docker.internal:<port>/api/backchannel-logout` | Authentik tells every app in the session when it ends |
-| Access token validity | 1 hour | The 5-minute default could expire mid-demo |
+   ```text
+   http://localhost:9000/source/oauth/callback/google/
+   ```
 
-To change the configuration, edit the blueprint and run `docker compose restart worker`.
+6. Click **Create**, then copy the **Client ID** and **Client secret**.
 
-### How logout reaches both apps
+**2. Add them to `.env`** in this folder. The empty keys are already there:
 
-Logging out takes two mechanisms:
+```bash
+GOOGLE_CLIENT_ID=1234567890-abc.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-...
+```
 
-1. **RP-initiated logout:** the app clears its own cookie and sends the browser to Authentik's end-session endpoint, which ends the SSO session.
-2. **Back-channel logout:** Authentik then sends a signed `logout_token` to every app in that session. Each app verifies it and revokes that session ID.
+Keep the secret in `.env`, which git ignores, and don't paste it into chat or commit it.
 
-Without the second step, the other app would stay signed in, because its session is its own cookie. The revocation applies on that app's next page load, so refresh the page to see it.
+**3. Turn it on:**
+
+```bash
+npm run google:apply
+```
+
+This restarts Authentik's worker with the new values and applies `blueprints/google-source.yaml`. It takes about a minute and prints nothing when it succeeds. Then open http://localhost:3000, click **Sign in with Vyoma SSO**, and choose **Google**.
+
+**What happens to Google users:**
+
+- **Existing accounts:** a Google account whose email matches an existing Vyoma account signs in as that person. For example, if your Gmail matched Meera's email, you'd see her GOLD plan.
+- **New users:** anyone else gets a new Vyoma account, with their email as the username and no extra prompts. OTT then creates a FREE account, and DSG creates a customer account.
+- **Verification:** Google confirms the email is verified. OTT and DSG require that before linking to an existing record.
+
+To turn Google off, empty both keys, then delete the **Google** source under **Directory > Federation and Social login** in the Authentik admin.
+
+### Upgrading from the earlier version of this demo
+
+The earlier demo (two Next.js apps on ports 3001 and 3002) is in this repository's first commit. To switch an existing install to this version, run:
+
+```bash
+npm run setup
+npm run up
+npm run db:init
+npm run build
+npm start
+```
+
+Your Authentik admin login is kept, so skip setup step 3. On startup the blueprint deletes the old demo apps and users from Authentik.
+
+## The demo users
+
+| Login | Authentik groups | Already in OTT | Already in DSG |
+| --- | --- | --- | --- |
+| `meera.learner` | `vyoma-users` | GOLD yearly plan, 1 purchase, 2h 14m of watch progress | Customer with 2 orders |
+| `ravi.manager` | `vyoma-managers`, `dsg-staff`, `dsg-page-orders` | Legacy role `ADMIN` | Staff with 4 pages |
+| `asha.admin` | `vyoma-superadmins`, `dsg-super-admin` | `SUPER_ADMIN` | Super Admin |
+| `priya.finance` | `vyoma-finance` | No | No |
+| `kiran.new` | `vyoma-users` | No | No |
+
+The passwords are in `.env` (`DEMO_MEERA_PASSWORD` and so on), and `npm run setup` prints them.
 
 ## Demo script
 
-**Prepare:** start everything, open a private window, and open http://localhost:3001 in the first tab and http://localhost:3002 in the second. Have both passwords ready. A private window matters because cookies from an earlier test can make the first login skip the password step.
+**Prepare:** run `npm run db:init`, then open a private window with two tabs: http://localhost:3000 (OTT) and http://localhost:5173 (DSG).
 
-### Part 1: Single sign-on
+### Part 1: One login, existing data kept
 
-1. In the **OTT** tab, click **Sign in with Vyoma SSO**.
-   > "The app doesn't handle passwords. It hands off to Authentik, our central identity provider."
-2. Sign in as `vyoma.staff`. You land back on OTT Demo showing the name, email and groups.
-   > "Authentik returned a signed token saying who this user is and which groups they belong to."
-3. Point to the **Backend API** card.
-   > "A separate backend verified the same login using Authentik's public keys. It never saw a password."
-4. Switch to the **DSG** tab, which still shows signed out, and click **Sign in with Vyoma SSO**. You're signed in with no password prompt.
-   > "This is a different app with its own session. Authentik already knew who I was, so I didn't log in again."
+1. **OTT tab:** click **Sign in**, then **Sign in with Vyoma SSO**. Log in as `meera.learner`.
+   - The first time each user signs in to OTT, Authentik asks them to approve access. Click **Continue**. OTT's plan asks for this consent screen, and DSG's plan doesn't.
+   - *Say: "OTT no longer checks passwords. Vyoma SSO did that and told OTT who Meera is."*
+2. OTT says **Your plan: GOLD**. Click **Meera Iyer** at the top to open the profile.
+   - *Say: "Her plan, purchase and watch history were already in OTT's database. On first sign-in, OTT matched her by email and linked her Vyoma account. Nothing was migrated or lost."*
+3. Go back to the catalogue. Open **Bhagavad Gita Intensive**, which resumes at 2h 14m. Then open **Advanced Vedic Chanting**, which is locked.
+   - *Say: "Vyoma SSO says who you are. OTT still decides what you've paid for."*
+4. **DSG tab:** click **Continue with Vyoma account**. You're signed in with no password. Click **My library** to see her 2 orders.
+   - *Say: "A different app with a different database, and no second login. DSG found her existing customer record too."*
 
-### Part 2: Role-based access
+### Part 2: Roles come from Vyoma SSO
 
-5. On DSG Demo, click **Admin page (restricted)**. You see **Admins only**.
-   > "Sam is authenticated but not authorized, because the `vyoma-admins` group isn't in the token."
-6. Click **Back to home**, then **Log out everywhere**.
-7. In the **OTT** tab, refresh. It's signed out too.
-8. Click **Sign in with Vyoma SSO** and sign in as `vyoma.admin`. The password is required again, which proves the Authentik session ended.
-9. Click **Admin page**. You see the **OTT admin console**.
-   > "Same app, same page, but a different group gives a different result. Roles are managed in one place."
+5. **DSG tab:** click **Log out**. **OTT tab:** refresh. You're signed out there too.
+6. **OTT tab:** sign in as `ravi.manager`. The header shows **MANAGER**. Click **Admin**.
+   - Open **Courses**: allowed. Open **Users**: **Restricted**.
+   - *Say: "OTT's old database had Ravi as ADMIN. Vyoma SSO says MANAGER, and Vyoma SSO wins, so access is managed in one place."*
+7. **DSG tab:** click **Continue with Vyoma account**, then **Admin**.
+   - Open **Orders**: allowed. Open **Coupons**: **403 from the DSG API**.
+   - *Say: "DSG gives page-level access from Vyoma SSO groups, and the server enforces it, not just the screen."*
 
-### Part 3: Logout everywhere
+### Part 3: Log out everywhere
 
-10. In the **DSG** tab, refresh and click **Sign in with Vyoma SSO**. Again there's no password prompt.
-11. In the **OTT** tab, click **Back to home**, then **Log out everywhere**. You return to OTT Demo, signed out.
-12. In the **DSG** tab, refresh. It's signed out too.
-    > "I logged out of one app, and Authentik told the other app to end its session as well."
+8. **OTT tab:** click **Log out**. You land on OTT's sign-in page.
+9. **DSG tab:** refresh. You're signed out.
+   - *Say: "One logout ended both sessions. Authentik told DSG server-to-server, so a copied DSG token stops working too."*
 
-If you want to prove the session is really gone, click **Sign in with Vyoma SSO** once more and show that Authentik asks for a password.
+### Optional Part 4: Google
 
-## Optional: TOTP MFA for the admin
+If you've set up Google, sign in to OTT with **Google** on the Vyoma login page, then open DSG and click **Continue with Vyoma account**. You're signed in without signing in to Google again.
+- *Say: "Google is just another way to prove who you are to Vyoma SSO. The apps didn't change at all."*
 
-This is safest as a separate step, because it adds a code prompt to every admin login afterwards.
+**Close:** "One account and one place to manage access, while each app keeps its own data. This is the code shape both plans describe."
 
-1. Sign in to an app as `vyoma.admin`.
-2. In the same browser, open http://localhost:9000/if/flow/default-authenticator-totp-setup/.
-3. Scan the QR code with an authenticator app, enter the 6-digit code, and continue.
-4. Log out, then sign in as `vyoma.admin` again. After the password, Authentik asks for an authentication code.
+If something looks wrong mid-demo, run `npm run db:init` and use a new private window.
 
-Only the admin is affected, because Authentik's default login flow asks for a code only from users who have a device enrolled. Each code works once, so wait for a new one if you've just used it. To remove MFA, delete the device under **Credentials** in the Authentik user settings, or run `npm run reset`.
+## How each plan maps to the code
+
+### OTT (`ott-sso.md`)
+
+| Plan | Here |
+| --- | --- |
+| 4.1: native OIDC with `openid-client` and `jose`, not Auth.js | `ott/src/lib/oidc.ts`, `ott/src/lib/auth.ts` |
+| 3.2: code flow with PKCE, state and nonce in HttpOnly cookies | `ott/src/app/api/auth/login/route.ts` |
+| 10.1 C: callback, ID token checked against JWKS, link by `authentikId` then email | `ott/src/app/api/auth/callback/route.ts` |
+| 4.3: encrypted `vyoma_session` cookie replaces `user_email` | `ott/src/lib/session.ts` |
+| 4.4: RP-initiated logout to `/login` | `ott/src/app/api/auth/logout/route.ts` |
+| 4.4: back-channel logout | `ott/src/app/api/auth/backchannel-logout/route.ts` |
+| 10: route guard in `src/middleware.ts` | `ott/src/proxy.ts` (Next.js 16 renamed the file) |
+| 2.4: admin roles and MANAGER/FINANCE restrictions | `ott/src/app/admin/layout.tsx`, `ott/src/lib/roles.ts` |
+| 10.1 A: `authentikId` on `User` | `ott/prisma/schema.prisma` |
+| 9: provider `vyoma-ott-platform`, slug `vyoma-ott`, `vyoma_roles` scope | `blueprints/vyoma-sso-demo.yaml` |
+
+### DSG (`dsg-sso.md`)
+
+| Plan | Here |
+| --- | --- |
+| 4.1: backend-for-frontend on Express with `openid-client` | `dsg/backend/services/oidcClient.js` |
+| 6.1: `/api/auth/oidc/login`, `/callback`, `/exchange`, `/logout` | `dsg/backend/routes/oidcRoutes.js` |
+| 4.3 Phase 1: 60-second single-use code, then today's DSG JWT | `dsg/backend/models/SsoLoginCode.js`, `dsg/src/pages/AuthCallback.jsx` |
+| 5.6: `dsg_roles` to `isAdmin`, `adminLevel`, `allowedPages` | `dsg/backend/utils/ssoRoles.js` |
+| 7.1: link by sub, then verified email, with refusals | `dsg/backend/utils/ssoLinking.js` |
+| 6.1: signed state cookie, safe `returnTo` | `dsg/backend/utils/ssoState.js` |
+| 2.6: `protect` and `adminMiddleware`, with `tokenVersion` revocation | `dsg/backend/middleware/` |
+| 10.2: `node:test` tests for the pure functions | `dsg/backend/tests/` (run `npm test`) |
+| 6.2: `loginWithSso` and the new `logout` in `AuthContext` | `dsg/src/context/AuthContext.jsx` |
+| 5: provider and app `dsg-dev`, `dsg` scope, implicit consent | `blueprints/vyoma-sso-demo.yaml` |
+
+## Changes from the plans
+
+Building the plans against Authentik 2026.8.5 turned up these issues. Each one is fixed here and marked in the code.
+
+| Plan says | Problem | What this demo does |
+| --- | --- | --- |
+| Both: scope mappings use `user.ak_groups` | Authentik 2026.8 removed `ak_groups` | Uses `request.user.groups` |
+| DSG 7.1: link by email only if `email_verified` is true | Authentik's built-in email mapping always sends `false`, so every existing user would be refused | A custom email mapping reports a real per-user flag |
+| OTT 10.1 C: link any matching email | An unverified account could take over someone's OTT record | Also requires `email_verified` |
+| OTT 10.1 C: only raise roles (`assignedRole !== 'USER' ? ...`) | Removing someone from a staff group in Authentik would never demote them | Always copies the role from Authentik |
+| OTT 10: `src/middleware.ts` | Deprecated in Next.js 16 | `src/proxy.ts` |
+| OTT 14.1: compose file with Redis and Authentik 2024.8 | Redis is no longer used | Official 2026.8.5 compose file, plus the two app databases |
+| DSG 4.6, Q9: back-channel logout unconfirmed | Authentik 2026.8.5 supports it | Both apps use it, so logout reaches the other app |
+| Both: configured in the admin UI | A provider created by a blueprint has no grant types and rejects every login | The blueprint sets `grant_types: [authorization_code]` |
+| OTT 4.4: logout only deletes the cookie | A copied cookie would keep working | Logout also revokes the session ID on the server |
+| Both: `sub` mode | The two plans differ | Both use `user_uuid`, so a person has the same ID in every app |
+| DSG 5.5: Google Source | Google sends no username or `email_verified`, so new users would stop at a username prompt, and the apps would refuse to link them | A Google property mapping sets the username to the email and copies Google's `verified_email` flag |
+
+## Not included
+
+These parts of the plans are left out, to keep the demo focused on sign-in, roles and logout:
+
+- **Rollout flags:** dual login (`SSO_MODE=both`, `ENABLE_LEGACY_LOGIN`) isn't built. Legacy password routes answer 410.
+- **Silent refresh:** OTT's refresh in `proxy.ts` and DSG's refresh-token re-check aren't built. Sessions simply last 7 days (OTT) or 8 to 12 hours (DSG).
+- **OTT playback features:** CDN URL signing, concurrent-stream limits and the heartbeat aren't built.
+- **DSG Phase 2:** the HttpOnly cookie and CSP aren't built.
+- **Authentik extras:** customer self-registration, captcha, required staff MFA, a DSG brand and SCIM or webhook deprovisioning aren't configured. Google sign-in is optional; see setup. MFA can still be enrolled by hand at http://localhost:9000/if/flow/default-authenticator-totp-setup/.
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| "Redirect URI Error" in Authentik | The app's callback doesn't exactly match the provider | Open the app at `localhost`, not `127.0.0.1`. The URI must be `http://localhost:3001/api/auth/callback/authentik`, or port 3002 for DSG |
-| `/api/auth/signin?error=OAuthCallbackError` | Authentik refused the login request | Run `docker compose logs server \| grep "Invalid grant_type"`. A match means `grant_types` is missing from the provider |
-| `/api/auth/error?error=Configuration`, with `"issuer" property does not match` in the app logs | The issuer doesn't match Authentik's | `AUTH_AUTHENTIK_ISSUER` needs its trailing slash, unlike the example in the Auth.js docs: `http://localhost:9000/application/o/ott-demo/` |
-| `/api/auth/error?error=Configuration`, with a fetch error in the app logs | The app can't reach Authentik | Start Authentik and wait for the check in setup step 2 to pass |
-| "Request has been denied" during setup | `/if/flow/initial-setup/` was opened directly | Start from http://localhost:9000/ |
-| Signed in as the wrong user, or no password prompt | The Authentik session cookie is shared across all `localhost` ports | Log out, or use a new private window |
-| Sign-in loops or a state or PKCE error | Stale cookies; browsers ignore ports when scoping cookies, so all apps share one jar | Clear `localhost` cookies. Each app prefixes its cookies with `ott.` or `dsg.`, so keep those distinct |
-| The other app stays signed in after logout | The worker couldn't reach the app, or the page wasn't refreshed | Refresh first. Then open **Dashboards > System Tasks** in the admin UI and look for `send_backchannel_logout_request` errors. On Linux, check that your firewall allows Docker to reach ports 3001 and 3002 |
-| Logout stops on an Authentik page | The logout redirect isn't registered | The provider needs `http://localhost:<port>/` as a redirect URI of type `logout` |
-| The API card says the token was rejected | The access token expired after 1 hour, or Authentik was reset | Log out and sign in again |
-| No groups are shown | The token was issued before a scope change | Log out and sign in again |
-| Blueprint changes don't apply | The file is only re-read on discovery | Run `docker compose restart worker`, then check **Customization > Blueprints** in the admin UI |
+| "Vyoma SSO isn't reachable" | Authentik isn't up yet | Wait for the check in setup step 2 |
+| "That sign-in link expired" right after logging in | You opened the app at `127.0.0.1`, so its cookies were set for a different host than the callback | Use `localhost` |
+| "Redirect URI Error" in Authentik | A redirect URI in the app's `.env` doesn't match the provider exactly | Compare the redirect values in `ott/.env` or `dsg/backend/.env` with that folder's `.env.example` |
+| OTT shows "Sign-in couldn't be completed" | The token exchange failed | Check the `ott` lines in the terminal. `ott/.env` must have `AUTHENTIK_ISSUER` with its trailing slash |
+| DSG API exits with "can't reach MongoDB" | The `dsg-db` container isn't running | Run `npm run up` |
+| OTT shows an error page, with a Prisma error in the terminal | `ott-db` isn't running, or the tables don't exist | Run `npm run up`, then `npm run db:init` |
+| No password prompt, or the wrong user | Authentik's login cookie is shared by every `localhost` app | Log out, or use a new private window |
+| The other app still shows you signed in | It hasn't reloaded since you logged out | Refresh it. If that doesn't help, check **Dashboards > System Tasks** in the Authentik admin for `send_backchannel_logout_request` errors |
+| DSG asks you to sign in in a new tab | DSG keeps its token in `sessionStorage`, as DSG does today | Click **Continue with Vyoma account**. No password is needed |
+| No Google button on the login page | The keys are empty, or the blueprint hasn't been applied | Check both `GOOGLE_` keys in `.env`, then run `npm run google:apply` and wait for it to finish |
+| Google says "Error 400: redirect_uri_mismatch" | The redirect URI in Google Cloud isn't exact | Use `http://localhost:9000/source/oauth/callback/google/`, with `http`, port 9000 and the trailing slash |
+| Google says "The OAuth client was not found" (invalid_client) | The client ID is wrong, or the client was deleted | Copy it again from Google Cloud, then run `npm run google:apply` |
+| Google says "Access blocked" or that the app is in testing | Your account isn't a test user | Add it under **Test users** on the Audience page |
+| Blueprint changes don't apply | Authentik only re-reads the file on discovery | Run `docker compose restart worker` |
 
-To start again from an empty Authentik, run `npm run reset`, then repeat steps 2 and 3. Users and TOTP devices are removed; your `.env` passwords are kept. `npm run down` stops Authentik and keeps its data.
-
-## Demo limits
-
-These are deliberate shortcuts, which a production deployment would need to replace:
-
-- **Revocation list:** it's held in each app's memory, so restarting an app forgets it. Use Redis or a database in production.
-- **HTTP:** everything runs on plain `localhost` HTTP. Production needs HTTPS and secure cookies.
-- **Token refresh:** the apps don't refresh tokens. Sessions and access tokens simply last 1 hour.
-- **Back-channel URL:** `host.docker.internal` only suits local Docker. Production uses real service URLs.
-- **Page-level checks:** the admin check runs on the `/admin` page only. A real app should also enforce roles on its APIs.
+To wipe everything, including Authentik, run `npm run reset`, then repeat setup steps 2 to 4.
 
 ## Pinned versions
 
-Checked on 2026-11-01. Every npm package is pinned to an exact version, with lockfiles.
-
-| Component | Version |
-| --- | --- |
-| Authentik | 2026.8.5 |
-| PostgreSQL | 16.15 |
-| Next.js | 16.4.3 |
-| React | 19.3.1 |
-| Auth.js (`next-auth`) | 5.0.0-beta.32 |
-| Express | 5.3.0 |
-| jose | 6.2.14 |
-
-Auth.js v5 is still published as a beta, so `5.0.0-beta.32` is the current release under the `beta` tag.
+| Component | Version | Note |
+| --- | --- | --- |
+| Authentik | 2026.8.5 | |
+| PostgreSQL | 16.15 | Authentik and OTT |
+| MongoDB | 8.0.38 | DSG |
+| Next.js | 16.2.12 | The version OTT 2.0 runs |
+| Prisma | 6.2.1 | The version OTT 2.0 runs |
+| React | 19.3.1 | Both apps |
+| Vite | 7.3.8 | |
+| React Router | 7.18.6 | |
+| Express | 5.3.0 | |
+| Mongoose | 9.12.2 | |
+| openid-client | 6.9.0 | |
+| jose | 6.2.18 | |

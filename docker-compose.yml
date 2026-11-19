@@ -8,6 +8,7 @@
 #   - ./blueprints is mounted so Authentik configures itself on startup.
 #   - extra_hosts makes host.docker.internal work on Linux too, so the worker
 #     can reach the apps for back-channel logout.
+#   - Two app databases are added at the end: PostgreSQL for OTT, MongoDB for DSG.
 name: authentik-sso-demo
 
 services:
@@ -79,6 +80,41 @@ services:
       - ./certs:/certs
       - ./custom-templates:/templates
 
+  # ---- App databases (not part of Authentik) ----
+  # OTT 2.0 uses PostgreSQL through Prisma, like its AWS RDS database.
+  ott-db:
+    environment:
+      POSTGRES_DB: ott
+      POSTGRES_USER: ott
+      POSTGRES_PASSWORD: ${OTT_DB_PASS:?OTT database password required}
+    healthcheck:
+      interval: 10s
+      retries: 5
+      test:
+        - CMD-SHELL
+        - pg_isready -d ott -U ott
+      timeout: 5s
+    image: docker.io/library/postgres:16.15-alpine
+    ports:
+      - 127.0.0.1:5433:5432
+    restart: unless-stopped
+    volumes:
+      - ott-database:/var/lib/postgresql/data
+
+  # DSG 2.0 uses MongoDB through Mongoose. Port 27018, so it never collides with
+  # a MongoDB already running on the default 27017. Bound to localhost only.
+  dsg-db:
+    image: docker.io/library/mongo:8.0.38
+    ports:
+      - 127.0.0.1:27018:27017
+    restart: unless-stopped
+    volumes:
+      - dsg-database:/data/db
+
 volumes:
   database:
+    driver: local
+  ott-database:
+    driver: local
+  dsg-database:
     driver: local

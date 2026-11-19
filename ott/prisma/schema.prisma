@@ -1,0 +1,78 @@
+// A cut-down copy of OTT 2.0's schema with the changes from ott-sso.md 10.1.
+// Only the fields the demo uses are kept.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                  String    @id @default(cuid())
+  // NEW: the OIDC `sub` claim from Authentik. Set at the first SSO login.
+  authentikId         String?   @unique
+  email               String    @unique
+  name                String?
+  // Legacy unsalted SHA-256 hash. Kept during the phased rollout for rollback.
+  password            String?
+  forcePasswordChange Boolean   @default(false)
+  // Synced from Authentik's `role` claim at every login.
+  role                String    @default("USER") // USER, SUPER_ADMIN, ADMIN, MANAGER, FINANCE
+  // Entitlements stay in OTT (ott-sso.md section 5).
+  plan                String    @default("FREE") // FREE, GOLD, PLATINUM
+  planInterval        String?   // MONTHLY, YEARLY
+  planStartedAt       DateTime?
+  planExpiresAt       DateTime?
+  coins               Int       @default(0)
+  createdAt           DateTime  @default(now())
+
+  purchases Purchase[]
+  progress  Progress[]
+}
+
+model Course {
+  id          String  @id
+  title       String
+  description String
+  accessLevel String  @default("FREE") // FREE, GOLD, PLATINUM, PAID
+  price       Int?    // INR, for PAID courses
+  durationMin Int
+
+  purchases Purchase[]
+  progress  Progress[]
+}
+
+model Purchase {
+  id        String   @id @default(cuid())
+  userId    String
+  courseId  String
+  amount    Int
+  currency  String   @default("INR")
+  createdAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id])
+}
+
+model Progress {
+  id        String   @id @default(cuid())
+  userId    String
+  courseId  String
+  seconds   Int
+  updatedAt DateTime @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id])
+
+  @@unique([userId, courseId])
+}
+
+// NEW: Authentik session ids ended by back-channel logout or by logging out
+// here. A session cookie whose `sid` is listed is rejected.
+model SessionRevocation {
+  sid       String   @id
+  createdAt DateTime @default(now())
+}
