@@ -10,7 +10,13 @@ A user signs in once with their Vyoma account and uses both apps. Existing users
 | Vyoma OTT | http://localhost:3000 | OTT 2.0: Next.js 16 App Router, Prisma, PostgreSQL |
 | Digital Sanskrit Guru | http://localhost:5173 | DSG 2.0: React + Vite SPA, with Express and MongoDB behind it on port 5001 |
 
-How the pieces fit together, with diagrams of sign-in and logout, is in [docs/architecture.md](docs/architecture.md).
+More documentation:
+
+- [docs/project-guide.md](docs/project-guide.md): the whole project explained, request by request and file by file.
+- [docs/migration-plan.md](docs/migration-plan.md): how existing OTT and DSG users move to SSO in production.
+- [docs/presenter-qa.md](docs/presenter-qa.md): likely technical questions, with answers.
+- [docs/architecture.md](docs/architecture.md): diagrams of the architecture, sign-in and logout.
+- [docs/Vyoma-SSO-Presentation.pptx](docs/Vyoma-SSO-Presentation.pptx): the 37-slide presentation, with speaker notes.
 
 The demo runs only on this machine, with its own databases. It never connects to a real OTT or DSG database. DSG's MongoDB uses port **27018**, so it can't collide with a MongoDB already running on the default port 27017.
 
